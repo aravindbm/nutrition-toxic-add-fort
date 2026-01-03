@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Presentation Viewer</title>
+    <style>
+        body { margin: 0; background-color: #202020; color: white; font-family: sans-serif; overflow: hidden; height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+        
+        #canvas-container { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
+        canvas { max-width: 100vw; max-height: 100vh; box-shadow: 0 0 15px rgba(0,0,0,0.5); }
+        
+        /* Navigation Buttons */
+        .nav-area { position: absolute; top: 0; bottom: 0; width: 15%; z-index: 10; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 30px; color: rgba(255,255,255,0.3); transition: 0.2s; }
+        .nav-area:hover { background: rgba(255,255,255,0.05); color: white; }
+        #prev-area { left: 0; }
+        #next-area { right: 0; }
+
+        /* Status Bar */
+        #status-bar { position: absolute; bottom: 10px; background: rgba(0,0,0,0.7); padding: 5px 15px; border-radius: 20px; font-size: 14px; pointer-events: none; }
+        
+        /* Debug/Error Console on Screen */
+        #debug-log { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #330000; padding: 20px; border: 2px solid red; text-align: center; max-width: 80%; z-index: 9999; }
+    </style>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.9.359/pdf.min.js"></script>
+    <script>
+        // Set worker properly
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.9.359/pdf.worker.min.js';
+    </script>
+</head>
+<body>
+
+    <div id="debug-log"></div>
+
+    <div id="prev-area" class="nav-area" onclick="changePage(-1)">&#10094;</div>
+    <div id="next-area" class="nav-area" onclick="changePage(1)">&#10095;</div>
+
+    <div id="canvas-container">
+        <canvas id="the-canvas"></canvas>
+    </div>
+
+    <div id="status-bar">
+        Loading...
+    </div>
+
+    <script>
+        // === CONFIGURATION ===
+        // 1. Rename your PDF to 'presentation.pdf' (lowercase)
+        // 2. Ensure it is in the SAME folder as this index.html file
+        const url = 'presentation.pdf'; 
+        // =====================
+
+        let pdfDoc = null,
+            pageNum = 1,
+            pageRendering = false,
+            pageNumPending = null,
+            canvas = document.getElementById('the-canvas'),
+            ctx = canvas.getContext('2d');
+
+        function logError(msg) {
+            const debug = document.getElementById('debug-log');
+            debug.style.display = 'block';
+            debug.innerHTML += `<p><strong>Error:</strong> ${msg}</p>`;
+            console.error(msg);
+        }
+
+        function renderPage(num) {
+            pageRendering = true;
+            pdfDoc.getPage(num).then(function(page) {
+                const viewport = page.getViewport({scale: 1});
+                
+                // Smart Fit Logic
+                const container = document.getElementById('canvas-container');
+                const scaleX = container.clientWidth / viewport.width;
+                const scaleY = container.clientHeight / viewport.height;
+                const scale = Math.min(scaleX, scaleY) * 0.95; // 95% fit
+                
+                const scaledViewport = page.getViewport({scale: scale});
+                canvas.height = scaledViewport.height;
+                canvas.width = scaledViewport.width;
+
+                const renderContext = { canvasContext: ctx, viewport: scaledViewport };
+                const renderTask = page.render(renderContext);
+
+                renderTask.promise.then(function() {
+                    pageRendering = false;
+                    document.getElementById('status-bar').textContent = `Page ${num} / ${pdfDoc.numPages}`;
+                    if (pageNumPending !== null) {
+                        renderPage(pageNumPending);
+                        pageNumPending = null;
+                    }
+                });
+            }).catch(err => logError("Error rendering page: " + err.message));
+        }
+
+        function queueRenderPage(num) {
+            if (pageRendering) {
+                pageNumPending = num;
+            } else {
+                renderPage(num);
+            }
+        }
+
+        function changePage(offset) {
+            if (offset === -1 && pageNum <= 1) return;
+            if (offset === 1 && pageNum >= pdfDoc.numPages) return;
+            pageNum += offset;
+            queueRenderPage(pageNum);
+        }
+
+        // LOAD PDF
+        document.getElementById('status-bar').textContent = "Downloading PDF...";
+        
+        pdfjsLib.getDocument(url).promise.then(function(pdfDoc_) {
+            pdfDoc = pdfDoc_;
+            document.getElementById('status-bar').textContent = `Loaded ${pdfDoc.numPages} Pages`;
+            renderPage(pageNum);
+        }).catch(function(error) {
+            if (error.status === 404) {
+                logError(`File Not Found!<br>Checked for: <b>${url}</b><br>Make sure the file exists and is named exactly 'presentation.pdf'`);
+            } else {
+                logError(`Failed to load PDF.<br>${error.message}`);
+            }
+        });
+
+        // Touch Swipe Support
+        let touchStartX = 0;
+        document.addEventListener('touchstart', e => touchStartX = e.changedTouches[0].screenX);
+        document.addEventListener('touchend', e => {
+            if (e.changedTouches[0].screenX < touchStartX - 50) changePage(1);
+            if (e.changedTouches[0].screenX > touchStartX + 50) changePage(-1);
+        });
+        
+        // Window Resize Support
+        window.addEventListener('resize', () => { if(pdfDoc) renderPage(pageNum); });
+
+    </script>
+</body>
+</html>
